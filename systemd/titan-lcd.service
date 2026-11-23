@@ -1,0 +1,13 @@
+[Unit]
+Description=Corsair TITAN LCD for Linux — 13-Theme Circular Display & C64 Little Computer People Daemon
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/corsair-titan-lcd
+ExecStart=/usr/bin/python3 %h/.local/share/corsair-titan-lcd/titan_lcd_llm_hud.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
