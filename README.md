@@ -59,7 +59,7 @@ sudo apt install python3-pil fonts-dejavu-core
 ### Run directly or install as a `systemd --user` service
 
 ```bash
-git clone https://github.com/MartynMcIntee/corsair-titan-lcd-linux.git
+git clone https://github.com/martynmcintee-tech/corsair-titan-lcd-linux.git
 cd corsair-titan-lcd-linux
 chmod +x install.sh
 ./install.sh
