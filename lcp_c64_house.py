@@ -13,8 +13,15 @@ import datetime
 import math
 import os
 import random
+import sys
 import time
 from PIL import Image, ImageDraw
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+import lcp_world_scenes as world
 
 # ===========================================================================
 # 1. Authentic C64 VIC-II 16-Color "Pepto" Palette (Philip Timmermann)
@@ -118,6 +125,13 @@ _FONT_5X7_RAW: dict[str, tuple[str, ...]] = {
     "%": ("##..#", "##.#.", "..#..", ".#.##", "#..##", ".....", "....."),
     "'": ("..#..", "..#..", ".....", ".....", ".....", ".....", "....."),
     '"': (".#.#.", ".#.#.", ".....", ".....", ".....", ".....", "....."),
+    "@": (".###.", "#...#", "#.###", "#.#.#", "#.###", ".###.", "....."),
+    "=": (".....", "#####", ".....", "#####", ".....", ".....", "....."),
+    "&": (".##..", "#..#.", ".##..", "#..#.", "#..#.", ".##.#", "....."),
+    "(": ("...#.", "..#..", "..#..", "..#..", "..#..", "...#.", "....."),
+    ")": (".#...", "..#..", "..#..", "..#..", "..#..", ".#...", "....."),
+    "<": ("...#.", "..#..", ".#...", "..#..", "...#.", ".....", "....."),
+    ">": (".#...", "..#..", "...#.", "..#..", ".#...", ".....", "....."),
 }
 
 _GLYPH_CACHE: dict[tuple[str, tuple[int, int, int]], Image.Image] = {}
@@ -902,12 +916,14 @@ _ICON_HEART = (
 
 _SPRITES: dict[tuple[str, bool, bool], Image.Image] = {}
 _PARTICLES: dict[str, Image.Image] = {}
+_JAY_RAW_GRIDS: dict[str, tuple[str, ...]] = {}
+_JAY_CUSTOM_CACHE: dict[tuple, Image.Image] = {}
 
 
 def _init_sprites() -> None:
     if _SPRITES:
         return
-    jay_defs = {
+    _JAY_RAW_GRIDS.update({
         "walk_0": _JAY_WALK_0,
         "walk_1": _JAY_WALK_1,
         "walk_2": _JAY_WALK_2,
@@ -929,12 +945,7 @@ def _init_sprites() -> None:
         "front_knock_hit": _JAY_FRONT_KNOCK_HIT,
         "front_wave_a": _JAY_FRONT_WAVE_A,
         "front_wave_b": _JAY_FRONT_WAVE_B,
-    }
-    for name, grid in jay_defs.items():
-        for sick in (False, True):
-            swap = {"A": "5"} if sick else None
-            for flip_x in (False, True):
-                _SPRITES[(name, flip_x, sick)] = compile_sprite(grid, swap=swap, flip_x=flip_x)
+    })
 
     dog_defs = {
         "dog_trot_0": _DOG_TROT_0,
@@ -953,6 +964,57 @@ def _init_sprites() -> None:
     _PARTICLES["note_a"] = compile_sprite(_ICON_NOTE_A)
     _PARTICLES["note_b"] = compile_sprite(_ICON_NOTE_B)
     _PARTICLES["heart"] = compile_sprite(_ICON_HEART)
+
+
+def _get_jay_sprite(
+    name: str,
+    flip_x: bool,
+    is_sick: bool,
+    settings: dict,
+) -> Image.Image:
+    skin_rgb, hair_rgb, top_rgb, pants_rgb = world.resolve_appearance(settings)
+    if is_sick:
+        skin_rgb = C_GRN
+    key = (name, flip_x, skin_rgb, hair_rgb, top_rgb, pants_rgb)
+    cached = _JAY_CUSTOM_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    rows = _JAY_RAW_GRIDS[name]
+    h = len(rows)
+    w = len(rows[0]) if h else 0
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    px = im.load()
+
+    # In 13x21 sprites, rows 0..13 use '9' for hair and rows >=15 use '9' for leather shoes.
+    # In 32x46 front_* sprites, rows 0..15 use '9' for hair and rows >=38 use '9' for shoes.
+    hair_cutoff = 15 if h > 30 else 13
+    shoe_rgb = (88, 56, 28)
+    nose_shade = (max(0, skin_rgb[0] - 28), max(0, skin_rgb[1] - 34), max(0, skin_rgb[2] - 34))
+
+    for y, row in enumerate(rows):
+        for x, ch in enumerate(row):
+            if ch == ".":
+                continue
+            if ch == "A":
+                rgb = skin_rgb
+            elif ch == "8" and h > 30:
+                rgb = nose_shade
+            elif ch == "9":
+                rgb = hair_rgb if y <= hair_cutoff else shoe_rgb
+            elif ch == "3":
+                rgb = top_rgb
+            elif ch == "6":
+                rgb = pants_rgb
+            else:
+                rgb = PAL[int(ch, 16)]
+            tx = (w - 1 - x) if flip_x else x
+            px[tx, y] = rgb + (255,)
+
+    if len(_JAY_CUSTOM_CACHE) > 512:
+        _JAY_CUSTOM_CACHE.clear()
+    _JAY_CUSTOM_CACHE[key] = im
+    return im
 
 
 # ===========================================================================
@@ -1386,18 +1448,10 @@ DOG_SPOTS = {
     "BEDROOM_VISIT": (2, 118, True),
 }
 
-def _user_greeting_tag() -> str:
-    raw = (os.environ.get("LCP_USER_NAME") or "").strip().upper()
-    cleaned = "".join(ch for ch in raw if ch in _FONT_5X7_RAW and ch != " ")[:8]
-    return cleaned
-
-
-_USER_TAG = _user_greeting_tag()
-_HI_USER = f"HI {_USER_TAG}!" if _USER_TAG else "HI THERE!"
-_LATE_USER = f"UP LATE {_USER_TAG}?" if _USER_TAG else "UP SO LATE?"
+_USER_NAME = (os.environ.get("LCP_USER_NAME") or os.environ.get("USER") or "FRIEND").strip().upper()[:8]
 
 SPEECH_GREETINGS = (
-    _HI_USER,
+    f"HI {_USER_NAME}!",
     "TAP! TAP! HI!",
     "PLAY POKER?",
     "NICE C64 CODE!",
@@ -1405,15 +1459,53 @@ SPEECH_GREETINGS = (
 )
 
 
-class LcpHouseSimulator:
-    """Smooth monotonic-time autonomous simulation for Jay & his pet dog Buddy."""
+TOUR_VENUES = (
+    "home",
+    "work_hub",
+    "shops",
+    "pub",
+    "gym",
+    "cinema",
+    "park_beach",
+    "girlfriend",
+    "nightclub",
+    "hotel",
+    "house_party",
+)
 
-    def __init__(self, seed: int | None = None) -> None:
-        self.rng = random.Random(seed)
+
+class LcpHouseSimulator:
+    """LCP 2026 — Realistic Calendar/Clock Life Schedule, EV Car Commutes & Funny Thought Bubbles."""
+
+    def __init__(self) -> None:
+        self.rng = random.Random()
         self.last_mono: float | None = None
         self.sim_time: float = 0.0
 
-        # Jay state
+        # World / Venue & EV Car Transit state
+        self.active_venue: str = "home"
+        self.desired_venue: str = "home"
+        self.leaving_home_to_car: bool = False
+        self.in_car_transit: bool = False
+        self.transit_from: str = "home"
+        self.transit_to: str = "home"
+        self.transit_timer: float = 0.0
+        self.transit_duration: float = 5.5
+        self.tour_timer: float = 0.0
+        self.tour_duration: float = 24.0
+        self.tour_idx: int = 0
+        self.last_cfg_mode: str | None = None
+        self.last_action_nonce: int = -1
+        self.chloe_visiting_home: bool = True
+
+        # Funny Thought Bubble state
+        self.thought_timer: float = 2.5
+        self.thought_cycle: float = 10.0
+        self.thought_show_secs: float = 5.8
+        self.current_thought: tuple[str, str] = ("HOME SWEET 480PX", "CIRCULAR HOME!")
+        self.recent_thoughts: list[tuple[str, str]] = []
+
+        # Jay state (inside 3-story house)
         self.floor: int = 1
         self.x: float = 88.0
         self.y: float = float(FLOOR_Y[1])
@@ -1428,8 +1520,8 @@ class LcpHouseSimulator:
         self.mode: str = "ACTING"  # "MOVING" or "ACTING"
         self.act_timer: float = 0.0
         self.act_duration: float = 11.0
-        self.next_knock_at: float = 28.0
-        self.knock_greeting: str = _HI_USER
+        self.next_knock_at: float = 42.0
+        self.knock_greeting: str = f"HI {_USER_NAME}!"
         self.prev_ai_busy: bool = False
 
         # Pet Dog ("Buddy") state
@@ -1447,6 +1539,32 @@ class LcpHouseSimulator:
         self.dog_timer: float = 0.0
         self.dog_duration: float = 10.0
 
+    def _begin_trip_to(self, target_venue: str, walk_door_first: bool, drive_secs: float = 5.6) -> None:
+        if target_venue == self.active_venue and not self.in_car_transit and not self.leaving_home_to_car:
+            return
+        self.desired_venue = target_venue
+        if target_venue == "driving":
+            self.leaving_home_to_car = False
+            self.in_car_transit = False
+            self.active_venue = "driving"
+            return
+        if walk_door_first and self.active_venue in ("home", "house_party") and not self.in_car_transit:
+            self.leaving_home_to_car = True
+            self.in_car_transit = False
+            self.transit_from = self.active_venue
+            self.transit_to = target_venue
+            self.transit_duration = drive_secs
+        else:
+            self.leaving_home_to_car = False
+            self.in_car_transit = True
+            self.transit_from = self.active_venue
+            self.transit_to = target_venue
+            self.transit_timer = 0.0
+            self.transit_duration = drive_secs
+            # Refresh thought immediately for driving!
+            self.current_thought = world.pick_funny_thought("driving", 12, False, 40, self.rng, self.recent_thoughts)
+            self.thought_timer = 0.4
+
     def _pick_next_activity(self, ai_busy: bool, gpu_util: int, hour: int) -> None:
         # Periodic signature 1985 Glass Knock & Wave easter egg!
         if self.sim_time >= self.next_knock_at and self.activity != "GLASS_KNOCK_WAVE":
@@ -1456,9 +1574,9 @@ class LcpHouseSimulator:
             self.act_duration = 7.4
             self.next_knock_at = self.sim_time + self.rng.uniform(44.0, 66.0)
             if ai_busy:
-                self.knock_greeting = self.rng.choice(("NICE AI MODEL!", "GPU IS HUMMING!", _HI_USER))
+                self.knock_greeting = self.rng.choice(("NICE AI MODEL!", "GPU IS HUMMING!", f"HI {_USER_NAME}!"))
             elif hour >= 23 or hour < 6:
-                self.knock_greeting = _LATE_USER
+                self.knock_greeting = f"UP LATE {_USER_NAME}?"
             else:
                 self.knock_greeting = self.rng.choice(SPEECH_GREETINGS)
             return
@@ -1587,25 +1705,144 @@ class LcpHouseSimulator:
         step = walk_speed * dt * (1.0 if dx > 0 else -1.0)
         return cur_floor, cur_x + step, cur_y, dx < 0, False, s_from, s_to, s_dest_floor, 0.0, False
 
-    def step(self, dt: float, ai_busy: bool, gpu_util: int, hour: int) -> None:
-        self.sim_time += dt
+    def step(
+        self,
+        dt: float,
+        ai_busy: bool,
+        gpu_util: int,
+        gpu_temp: int,
+        now_dt: datetime.datetime,
+        settings: dict,
+    ) -> None:
+        spd = float(settings.get("sim_speed", 1.0))
+        eff_dt = dt * spd
+        self.sim_time += eff_dt
+        hour = now_dt.hour
+        cfg_mode = settings.get("mode", "auto")
 
-        # Immediate reaction when an LLM loads or GPU spins up from idle!
-        if ai_busy and not self.prev_ai_busy and self.activity not in ("TYPING_C64", "GLASS_KNOCK_WAVE"):
+        # 1. Handle Instant Action Buttons from GUI / Tray / CLI
+        nonce = int(settings.get("action_nonce", 0))
+        if self.last_action_nonce == -1:
+            self.last_action_nonce = nonce
+        elif nonce != self.last_action_nonce:
+            self.last_action_nonce = nonce
+            cmd = settings.get("action_cmd", "")
+            if cmd == "knock":
+                self.leaving_home_to_car = False
+                self.in_car_transit = False
+                self.active_venue = "home"
+                self.desired_venue = "home"
+                self.on_stairs = False
+                self.floor = 0
+                self.x = 114.0
+                self.y = float(FLOOR_Y[0])
+                self.activity = "GLASS_KNOCK_WAVE"
+                self.mode = "MOVING"
+                self.act_timer = 0.0
+                self.act_duration = 8.0
+                self.knock_greeting = f"HI {_USER_NAME}!"
+            elif cmd == "thought":
+                eff_v = "driving" if self.in_car_transit else self.active_venue
+                self.current_thought = world.pick_funny_thought(
+                    eff_v, hour, ai_busy, gpu_temp, self.rng, self.recent_thoughts
+                )
+                self.thought_timer = 0.0
+            elif cmd == "next_venue":
+                self.tour_idx = (self.tour_idx + 1) % len(TOUR_VENUES)
+                nxt_v = TOUR_VENUES[self.tour_idx]
+                if nxt_v == self.active_venue:
+                    self.tour_idx = (self.tour_idx + 1) % len(TOUR_VENUES)
+                    nxt_v = TOUR_VENUES[self.tour_idx]
+                # Never pick work on Sat/Sun when jumping randomly!
+                if now_dt.weekday() >= 5 and nxt_v == "work_hub":
+                    self.tour_idx = (self.tour_idx + 1) % len(TOUR_VENUES)
+                    nxt_v = TOUR_VENUES[self.tour_idx]
+                self._begin_trip_to(nxt_v, walk_door_first=False, drive_secs=5.2)
+
+        # 2. Resolve Target Venue (Realistic 2026 Schedule vs Tour vs Pinned Mode)
+        if cfg_mode == "auto":
+            # 20-minute wall-clock slot seed so weekend/evening trips feel natural & stable
+            slot_seed = now_dt.year * 100000 + now_dt.timetuple().tm_yday * 100 + (now_dt.hour * 3 + now_dt.minute // 20)
+            sched_target = world.compute_realistic_venue(now_dt, settings, slot_seed)
+            if self.last_cfg_mode is None:
+                # Boot directly into current realistic schedule slot
+                self.active_venue = sched_target
+                self.desired_venue = sched_target
+            elif sched_target != self.desired_venue:
+                self._begin_trip_to(sched_target, walk_door_first=True, drive_secs=6.5)
+        elif cfg_mode == "tour":
+            if self.last_cfg_mode != "tour":
+                self.tour_timer = 0.0
+            self.tour_timer += eff_dt
+            if self.tour_timer >= self.tour_duration and not self.in_car_transit and not self.leaving_home_to_car:
+                self.tour_timer = 0.0
+                self.tour_idx = (self.tour_idx + 1) % len(TOUR_VENUES)
+                nxt_v = TOUR_VENUES[self.tour_idx]
+                if now_dt.weekday() >= 5 and nxt_v == "work_hub":
+                    self.tour_idx = (self.tour_idx + 1) % len(TOUR_VENUES)
+                    nxt_v = TOUR_VENUES[self.tour_idx]
+                self._begin_trip_to(nxt_v, walk_door_first=True, drive_secs=5.5)
+        elif cfg_mode in world.SCENE_MODE_IDS:
+            if self.last_cfg_mode is None:
+                self.active_venue = cfg_mode
+                self.desired_venue = cfg_mode
+            elif cfg_mode != self.desired_venue:
+                # Drive the EV car over to the newly selected venue!
+                self._begin_trip_to(cfg_mode, walk_door_first=False, drive_secs=4.8)
+
+        self.last_cfg_mode = cfg_mode
+
+        # 3. Advance Car Transit Timer if Currently Driving Between Places!
+        if self.in_car_transit:
+            self.transit_timer += eff_dt
+            if self.transit_timer >= self.transit_duration:
+                self.in_car_transit = False
+                self.active_venue = self.transit_to
+                self.chloe_visiting_home = bool(settings.get("girlfriend_enabled", True)) and (self.rng.random() < 0.65)
+                if self.active_venue == "home":
+                    # Step right inside the front door upon arriving home!
+                    self.on_stairs = False
+                    self.floor = 0
+                    self.x = 49.0
+                    self.y = float(FLOOR_Y[0])
+                    self._pick_next_activity(ai_busy, gpu_util, hour)
+                self.current_thought = world.pick_funny_thought(
+                    self.active_venue, hour, ai_busy, gpu_temp, self.rng, self.recent_thoughts
+                )
+                self.thought_timer = 0.8
+
+        # 4. Advance Funny Thought Bubble Cycle
+        self.thought_timer += dt  # Real-time readable duration regardless of walk speed!
+        if self.thought_timer >= self.thought_cycle:
+            self.thought_timer = 0.0
+            eff_v = "driving" if self.in_car_transit else self.active_venue
+            self.current_thought = world.pick_funny_thought(
+                eff_v, hour, ai_busy, gpu_temp, self.rng, self.recent_thoughts
+            )
+
+        # In House Party mode, keep Jay awake & partying!
+        if self.active_venue == "house_party" and self.activity == "SLEEPING":
+            self.activity = "CHECKING_RECORDS"
+            self.mode = "MOVING"
+
+        # Immediate reaction when an LLM loads or GPU spins up from idle while at home!
+        if (
+            self.active_venue == "home"
+            and not self.leaving_home_to_car
+            and not self.in_car_transit
+            and ai_busy
+            and not self.prev_ai_busy
+            and self.activity not in ("TYPING_C64", "GLASS_KNOCK_WAVE")
+        ):
             self.activity = "TYPING_C64"
             self.mode = "MOVING"
             self.act_timer = 0.0
             self.act_duration = 14.0
         self.prev_ai_busy = ai_busy
 
-        # --- Advance Jay ---
-        if self.activity == "GLASS_KNOCK_WAVE":
-            tgt_floor, tgt_x, tgt_left = self.floor, 120.0, False
-        else:
-            st = STATIONS[self.activity]
-            tgt_floor, tgt_x, tgt_left = st[0], float(st[1]), st[2]
-
-        if self.mode == "MOVING":
+        # 5. Advance Jay inside 3-Story House (including walking to Front Door for Car!)
+        if self.leaving_home_to_car:
+            tgt_floor, tgt_x, tgt_left = 0, 49.0, True
             (
                 self.floor,
                 self.x,
@@ -1616,9 +1853,9 @@ class LcpHouseSimulator:
                 self.stair_to,
                 self.stair_dest_floor,
                 self.stair_t,
-                arrived,
+                arrived_door,
             ) = self._step_mover(
-                dt,
+                eff_dt,
                 self.floor,
                 self.x,
                 self.on_stairs,
@@ -1628,19 +1865,60 @@ class LcpHouseSimulator:
                 self.stair_t,
                 tgt_floor,
                 tgt_x,
-                walk_speed=28.0,
-                climb_rate=0.62,
+                walk_speed=36.0,
+                climb_rate=0.85,
             )
-            if arrived:
-                self.face_left = tgt_left
-                self.mode = "ACTING"
-                self.act_timer = 0.0
+            if arrived_door:
+                self.leaving_home_to_car = False
+                self.in_car_transit = True
+                self.transit_timer = 0.0
+                self.current_thought = world.pick_funny_thought(
+                    "driving", hour, ai_busy, gpu_temp, self.rng, self.recent_thoughts
+                )
+                self.thought_timer = 0.3
         else:
-            self.act_timer += dt
-            if self.act_timer >= self.act_duration:
-                self._pick_next_activity(ai_busy, gpu_util, hour)
+            if self.activity == "GLASS_KNOCK_WAVE":
+                tgt_floor, tgt_x, tgt_left = self.floor, 120.0, False
+            else:
+                st = STATIONS[self.activity]
+                tgt_floor, tgt_x, tgt_left = st[0], float(st[1]), st[2]
 
-        # --- Advance Pet Dog ("Buddy") ---
+            if self.mode == "MOVING":
+                (
+                    self.floor,
+                    self.x,
+                    self.y,
+                    self.face_left,
+                    self.on_stairs,
+                    self.stair_from,
+                    self.stair_to,
+                    self.stair_dest_floor,
+                    self.stair_t,
+                    arrived,
+                ) = self._step_mover(
+                    eff_dt,
+                    self.floor,
+                    self.x,
+                    self.on_stairs,
+                    self.stair_from,
+                    self.stair_to,
+                    self.stair_dest_floor,
+                    self.stair_t,
+                    tgt_floor,
+                    tgt_x,
+                    walk_speed=28.0,
+                    climb_rate=0.62,
+                )
+                if arrived:
+                    self.face_left = tgt_left
+                    self.mode = "ACTING"
+                    self.act_timer = 0.0
+            else:
+                self.act_timer += eff_dt
+                if self.act_timer >= self.act_duration:
+                    self._pick_next_activity(ai_busy, gpu_util, hour)
+
+        # 6. Advance Pet Dog ("Buddy")
         d_tgt_floor, d_tgt_x, d_tgt_left = DOG_SPOTS[self.dog_goal]
         if self.dog_mode == "MOVING":
             (
@@ -1655,7 +1933,7 @@ class LcpHouseSimulator:
                 self.dog_s_t,
                 d_arrived,
             ) = self._step_mover(
-                dt,
+                eff_dt,
                 self.dog_floor,
                 self.dog_x,
                 self.dog_on_stairs,
@@ -1673,7 +1951,7 @@ class LcpHouseSimulator:
                 self.dog_mode = "ACTING"
                 self.dog_timer = 0.0
         else:
-            self.dog_timer += dt
+            self.dog_timer += eff_dt
             if self.dog_timer >= self.dog_duration and self.activity != "PETTING_DOG":
                 choices = [k for k in DOG_SPOTS if k != self.dog_goal]
                 self.dog_goal = self.rng.choice(choices)
@@ -1732,10 +2010,12 @@ def _temp_color(temp_c: int) -> tuple[int, int, int]:
 
 def render_theme_c64_lcp(gpu, llm, cpu, cooling, now_dt=None) -> Image.Image:
     """
-    Main theme renderer for Corsair TITAN 360 RX circular 480x480 pump LCD.
-    Advances the autonomous 1985 C64 Little Computer People simulation via monotonic dt.
+    LCP 2026 — Modern Edition Circular 480x480 Renderer.
+    Realistic Mon-Fri 9-5 FCC work schedule, evenings at Home, weekends off-duty,
+    EV car commutes between places, 11 venues, and funny context-aware thought bubbles.
     """
     _init_sprites()
+    settings = world.read_lcp_settings()
 
     gpu = gpu or {}
     llm = llm or {}
@@ -1758,12 +2038,11 @@ def render_theme_c64_lcp(gpu, llm, cpu, cooling, now_dt=None) -> Image.Image:
     else:
         dt = max(0.0, min(0.5, now_mono - _SIM.last_mono))
     _SIM.last_mono = now_mono
-    _SIM.step(dt, ai_busy=ai_busy, gpu_util=gpu_util, hour=now_dt.hour)
+    _SIM.step(dt, ai_busy=ai_busy, gpu_util=gpu_util, gpu_temp=gpu_temp, now_dt=now_dt, settings=settings)
 
     t = _SIM.sim_time
     tick = int(t * 4.5)
 
-    # Determine sky phase from local wall-clock hour
     hr = now_dt.hour
     if 7 <= hr <= 18:
         day_phase = "day"
@@ -1772,260 +2051,352 @@ def render_theme_c64_lcp(gpu, llm, cpu, cooling, now_dt=None) -> Image.Image:
     else:
         day_phase = "night"
 
-    canvas = _get_house_base(day_phase).copy()
-    d = ImageDraw.Draw(canvas)
+    venue = "driving" if _SIM.in_car_transit else _SIM.active_venue
+    jay_head_xy: tuple[int, int] | None = None
+    suppress_thought = False
 
     # -----------------------------------------------------------------------
-    # 1. Dynamic Sky Details (Clouds / Twinkling Stars) & Chimney Smoke
+    # 1. EV Car Commute & Off-Site 2026 Venues
     # -----------------------------------------------------------------------
-    if day_phase == "day":
-        drift = int(math.sin(t * 0.45) * 3.0)
-        for cx_c, cy_c in ((26 + drift, 70), (212 - drift, 74)):
-            d.rectangle([cx_c - 6, cy_c, cx_c + 6, cy_c + 3], fill=C_WHT)
-            d.rectangle([cx_c - 3, cy_c - 2, cx_c + 3, cy_c], fill=C_WHT)
-    elif day_phase == "night":
-        stars = (
-            (46, 44), (58, 36), (162, 34), (188, 52),
-            (28, 72), (208, 74), (20, 96), (218, 92),
+    if venue == "driving":
+        r_from = _SIM.transit_from if _SIM.in_car_transit else "home"
+        r_to = _SIM.transit_to if _SIM.in_car_transit else "driving"
+        canvas, status_str, status_col, jay_head_xy = world.draw_driving_scene(
+            t, tick, day_phase, settings, r_from, r_to, draw_pixel_text
         )
-        for idx, (sx, sy) in enumerate(stars):
-            twinkle = (tick + idx * 3) % 7 == 0
-            d.point((sx, sy), fill=C_YEL if twinkle else C_WHT)
-
-    # Animated Chimney Smoke Puffs (rising safely inside upper-left arc x=69..77, y=22..31)
-    for p_i in range(3):
-        phase = ((t * 0.9 + p_i * 0.33) % 1.0)
-        py = int(round(30 - phase * 8.0))
-        px_s = int(round(73 + math.sin(phase * 4.0 + p_i) * 2.0))
-        col_s = C_LGY if phase < 0.6 else C_MGY
-        r_s = 2 if phase > 0.35 else 1
-        d.ellipse([px_s - r_s, py - r_s, px_s + r_s, py + r_s], fill=col_s)
-
-    # -----------------------------------------------------------------------
-    # 2. Live Interactive Room Appliances (C64 Screen, Fireplace, Water, Fridge)
-    # -----------------------------------------------------------------------
-    # C64 1702 Monitor Glow (lit whenever Jay is typing on C64 OR an LLM/GPU job is active!)
-    c64_lit = (_SIM.activity == "TYPING_C64" and _SIM.mode == "ACTING") or ai_busy
-    if c64_lit:
-        d.rectangle([48, 121, 54, 126], fill=C_BLU)
-        d.rectangle([49, 122, 53, 125], fill=C_CYN if (tick % 6 != 0) else C_BLU)
-        # Scrolling pixel code lines on 1702 monitor
-        for ly in range(122, 126):
-            w_line = ((tick + ly * 3) % 4) + 1
-            d.line([(49, ly), (49 + w_line, ly)], fill=C_LGN if ly % 2 == 0 else C_WHT)
-        d.point((54, 128), fill=C_LGN)
-
-    # Spinning Vinyl Record on Turntable
-    vinyl_spin = (_SIM.activity == "CHECKING_RECORDS" and _SIM.mode == "ACTING") or c64_lit
-    if vinyl_spin and (tick % 2 == 0):
-        d.point((87, 125), fill=C_RED)
-        d.point((91, 125), fill=C_WHT)
+        plaque_bg, plaque_bdr = (18, 34, 58), world.NEON_CYAN
+    elif venue == "work_hub":
+        canvas, status_str, status_col, jay_head_xy = world.draw_work_hub_scene(
+            t, tick, day_phase, settings, draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = world.CORP_NAVY, world.CORP_GREEN
+    elif venue == "shops":
+        canvas, status_str, status_col, jay_head_xy = world.draw_shops_scene(
+            t, tick, day_phase, settings, draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = world.GREGGS_BLUE, world.GREGGS_GOLD
+    elif venue == "pub":
+        canvas, status_str, status_col, jay_head_xy = world.draw_pub_scene(
+            t, tick, settings, draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = (58, 24, 20), world.GOLD_TRIM
+    elif venue == "gym":
+        canvas, status_str, status_col, jay_head_xy = world.draw_gym_scene(
+            t, tick, settings, draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = (18, 28, 42), world.NEON_CYAN
+    elif venue == "cinema":
+        canvas, status_str, status_col, jay_head_xy = world.draw_cinema_scene(
+            t, tick, settings, _PARTICLES["heart"], draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = (48, 14, 28), world.PASTEL_PINK
+    elif venue == "park_beach":
+        dog_trot = _SPRITES[(f"dog_trot_{tick % 2}", False, False)]
+        canvas, status_str, status_col, jay_head_xy = world.draw_beach_scene(
+            t, tick, day_phase, settings, dog_trot, draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = (22, 68, 108), C_YEL
+    elif venue == "nightclub":
+        canvas, status_str, status_col, jay_head_xy = world.draw_nightclub_scene(
+            t, tick, settings, _PARTICLES["heart"], _PARTICLES["note_a"], _PARTICLES["note_b"], draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = (28, 12, 48), world.NEON_PINK
+    elif venue == "hotel":
+        canvas, status_str, status_col, jay_head_xy = world.draw_hotel_scene(
+            t, tick, day_phase, settings, _PARTICLES["heart"], draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = (36, 24, 48), world.GOLD_TRIM
+    elif venue == "girlfriend":
+        canvas, status_str, status_col, jay_head_xy = world.draw_girlfriend_scene(
+            t, tick, settings, _PARTICLES["heart"], _PARTICLES["note_a"], draw_pixel_text
+        )
+        plaque_bg, plaque_bdr = (42, 22, 58), world.PASTEL_PINK
     else:
-        d.point((89, 125), fill=C_RED)
+        # -------------------------------------------------------------------
+        # 3-Story Cutaway House ("home" or "house_party")
+        # -------------------------------------------------------------------
+        is_party = (venue == "house_party")
+        eff_sky = "night" if is_party else day_phase
+        canvas = _get_house_base(eff_sky).copy()
+        d = ImageDraw.Draw(canvas)
+        plaque_bg = (42, 20, 64) if is_party else C_BLU
+        plaque_bdr = world.NEON_PINK if is_party else C_LBL
 
-    # Crackling Brick Fireplace (3-frame animated pixel fire + warm hearth glow)
-    f_frame = tick % 3
-    if f_frame == 0:
-        d.polygon([(70, 183), (72, 176), (74, 180), (76, 175), (78, 183)], fill=C_ORG)
-        d.polygon([(72, 183), (74, 178), (76, 183)], fill=C_YEL)
-        d.point((73, 174), fill=C_RED)
-    elif f_frame == 1:
-        d.polygon([(70, 183), (73, 175), (75, 179), (78, 176), (78, 183)], fill=C_RED)
-        d.polygon([(71, 183), (74, 177), (77, 183)], fill=C_ORG)
-        d.polygon([(73, 183), (74, 179), (75, 183)], fill=C_YEL)
-        d.point((75, 174), fill=C_WHT)
-    else:
-        d.polygon([(70, 183), (71, 177), (74, 175), (77, 178), (78, 183)], fill=C_ORG)
-        d.polygon([(72, 183), (74, 177), (76, 183)], fill=C_YEL)
-        d.point((72, 175), fill=C_RED)
+        if eff_sky == "day":
+            drift = int(math.sin(t * 0.45) * 3.0)
+            for cx_c, cy_c in ((26 + drift, 70), (212 - drift, 74)):
+                d.rectangle([cx_c - 6, cy_c, cx_c + 6, cy_c + 3], fill=C_WHT)
+                d.rectangle([cx_c - 3, cy_c - 2, cx_c + 3, cy_c], fill=C_WHT)
+        elif eff_sky == "night":
+            stars = (
+                (46, 44), (58, 36), (162, 34), (188, 52),
+                (28, 72), (208, 74), (20, 96), (218, 92),
+            )
+            for idx, (sx, sy) in enumerate(stars):
+                twinkle = (tick + idx * 3) % 7 == 0
+                d.point((sx, sy), fill=C_YEL if twinkle else C_WHT)
 
-    # Floor lamp casts warm pixel halo at dusk/night
-    if day_phase != "day":
-        d.line([(109, 168), (115, 168)], fill=C_YEL)
-        d.point((110, 169), fill=C_YEL)
-        d.point((114, 169), fill=C_YEL)
+        for p_i in range(3):
+            phase = ((t * 0.9 + p_i * 0.33) % 1.0)
+            py = int(round(30 - phase * 8.0))
+            px_s = int(round(73 + math.sin(phase * 4.0 + p_i) * 2.0))
+            col_s = C_LGY if phase < 0.6 else C_MGY
+            r_s = 2 if phase > 0.35 else 1
+            d.ellipse([px_s - r_s, py - r_s, px_s + r_s, py + r_s], fill=col_s)
 
-    # Kitchen Water Tank Level ($3 Cyan column, subtly reflects coolant comfort)
-    water_ratio = max(0.25, min(0.92, 1.0 - max(0.0, liquid_c - 26.0) / 30.0))
-    wt_h = max(3, int(round(13 * water_ratio)))
-    d.rectangle([142, 166 - wt_h, 147, 166], fill=C_CYN)
-    d.line([(142, 166 - wt_h), (147, 166 - wt_h)], fill=C_WHT)
+        c64_lit = (_SIM.activity == "TYPING_C64" and _SIM.mode == "ACTING") or ai_busy or is_party
+        if c64_lit:
+            d.rectangle([48, 121, 54, 126], fill=C_BLU)
+            d.rectangle([49, 122, 53, 125], fill=C_CYN if (tick % 6 != 0) else C_BLU)
+            for ly in range(122, 126):
+                w_line = ((tick + ly * 3) % 4) + 1
+                d.line([(49, ly), (49 + w_line, ly)], fill=C_LGN if ly % 2 == 0 else C_WHT)
+            d.point((54, 128), fill=C_LGN)
 
-    # Open Refrigerator Interior when Jay is snacking!
-    if _SIM.activity == "RAIDING_FRIDGE" and _SIM.mode == "ACTING":
-        d.rectangle([186, 167, 196, 184], fill=C_YEL)
-        d.line([(186, 173), (196, 173)], fill=C_LGY)
-        d.line([(186, 179), (196, 179)], fill=C_LGY)
-        # Colorful snacks inside fridge
-        d.rectangle([188, 170, 190, 172], fill=C_RED)
-        d.rectangle([192, 169, 194, 172], fill=C_GRN)
-        d.rectangle([189, 176, 193, 178], fill=C_CYN)
-        # Open fridge door swung out to right
-        d.rectangle([197, 166, 200, 185], fill=C_WHT, outline=C_BLK)
-
-    # -----------------------------------------------------------------------
-    # 3. Render Autonomous Pet Dog ("Buddy")
-    # -----------------------------------------------------------------------
-    if _SIM.dog_mode == "MOVING":
-        dog_spr_name = f"dog_trot_{tick % 2}"
-    elif _SIM.activity == "PETTING_DOG" and _SIM.mode == "ACTING" and _SIM.dog_floor == _SIM.floor:
-        dog_spr_name = f"dog_sit_{tick % 2}"
-    elif _SIM.dog_goal == "NAP_FIRE":
-        dog_spr_name = f"dog_nap_{(tick // 4) % 2}"
-    elif _SIM.dog_goal == "EAT_BOWL":
-        dog_spr_name = f"dog_eat_{tick % 2}"
-    else:
-        dog_spr_name = f"dog_sit_{(tick // 2) % 2}"
-
-    dog_spr = _SPRITES[(dog_spr_name, _SIM.dog_face_left, False)]
-    dx_px = int(round(_SIM.dog_x)) - dog_spr.width // 2
-    dy_px = int(round(_SIM.dog_y)) - dog_spr.height + 1
-    canvas.paste(dog_spr, (dx_px, dy_px), dog_spr)
-
-    if _SIM.dog_mode == "ACTING" and _SIM.dog_goal == "NAP_FIRE":
-        zy = dy_px - 2 - (tick % 4)
-        draw_pixel_text(canvas, dx_px + 8, zy, "Z", color=C_WHT, shadow=C_BLK)
-
-    # -----------------------------------------------------------------------
-    # 4. Render Autonomous Little Computer Person ("Jay") & Particles
-    # -----------------------------------------------------------------------
-    is_foreground_knock = (_SIM.activity == "GLASS_KNOCK_WAVE" and _SIM.mode == "ACTING")
-
-    if not is_foreground_knock:
-        if _SIM.mode == "MOVING":
-            if _SIM.on_stairs:
-                jay_name = f"climb_{tick % 2}"
-            else:
-                jay_name = f"walk_{tick % 4}"
-            jay_spr = _SPRITES[(jay_name, _SIM.face_left, is_sick)]
-            jx = int(round(_SIM.x)) - jay_spr.width // 2
-            jy = int(round(_SIM.y)) - jay_spr.height + 1
-            canvas.paste(jay_spr, (jx, jy), jay_spr)
-
-        elif _SIM.activity == "SLEEPING":
-            # Draw Jay tucked horizontally into the top-floor bed!
-            sl_spr = _SPRITES[(f"sleep_{(tick // 4) % 2}", False, is_sick)]
-            canvas.paste(sl_spr, (66, 83), sl_spr)
-            # Floating Zzz particles
-            for zi, zch in enumerate(("Z", "Z")):
-                z_off = ((tick + zi * 4) % 8)
-                zx = 74 + zi * 6 + (z_off // 3)
-                zy = 76 - z_off
-                if zy >= 62:
-                    draw_pixel_text(canvas, zx, zy, zch, color=C_WHT, shadow=C_BLK)
-
+        vinyl_spin = (_SIM.activity == "CHECKING_RECORDS" and _SIM.mode == "ACTING") or c64_lit or is_party
+        if vinyl_spin and (tick % 2 == 0):
+            d.point((87, 125), fill=C_RED)
+            d.point((91, 125), fill=C_WHT)
         else:
-            if _SIM.activity in ("TYPING_C64", "PLAYING_PIANO"):
-                jay_name = f"type_{tick % 2}"
-            elif _SIM.activity == "READING_BY_FIRE":
-                jay_name = f"read_{(tick // 4) % 2}"
-            elif _SIM.activity == "RAIDING_FRIDGE":
-                jay_name = f"snack_{(tick // 2) % 2}"
-            elif _SIM.activity == "PETTING_DOG":
-                jay_name = f"pet_{(tick // 2) % 2}"
-            else:
-                jay_name = "walk_1"
+            d.point((89, 125), fill=C_RED)
 
-            jay_spr = _SPRITES[(jay_name, _SIM.face_left, is_sick)]
-            jx = int(round(_SIM.x)) - jay_spr.width // 2
-            jy = int(round(_SIM.y)) - jay_spr.height + 1
-            canvas.paste(jay_spr, (jx, jy), jay_spr)
-
-            # Activity-specific particles
-            if _SIM.activity == "PLAYING_PIANO":
-                for ni in range(2):
-                    n_prog = (tick + ni * 4) % 8
-                    nx = 192 + ni * 7 + (n_prog % 3) - 1
-                    ny = 116 - n_prog * 2
-                    if ny >= 102:
-                        n_ic = _PARTICLES["note_a" if ni == 0 else "note_b"]
-                        canvas.paste(n_ic, (nx, ny), n_ic)
-            elif _SIM.activity == "PETTING_DOG":
-                hy = jy + 1 - (tick % 3)
-                h_ic = _PARTICLES["heart"]
-                canvas.paste(h_ic, (jx + 10, hy), h_ic)
-
-    # -----------------------------------------------------------------------
-    # 5. Foreground 1985 Easter Egg: Stepping Up to Knock & Wave on LCD Glass!
-    # -----------------------------------------------------------------------
-    if is_foreground_knock:
-        kt = _SIM.act_timer
-        if kt < 0.8:
-            fg_pose = "front_idle"
-        elif kt < 3.8:
-            sub = int((kt - 0.8) * 4.5) % 2
-            fg_pose = "front_knock_hit" if sub == 1 else "front_knock_prep"
+        f_frame = tick % 3
+        if f_frame == 0:
+            d.polygon([(70, 183), (72, 176), (74, 180), (76, 175), (78, 183)], fill=C_ORG)
+            d.polygon([(72, 183), (74, 178), (76, 183)], fill=C_YEL)
+            d.point((73, 174), fill=C_RED)
+        elif f_frame == 1:
+            d.polygon([(70, 183), (73, 175), (75, 179), (78, 176), (78, 183)], fill=C_RED)
+            d.polygon([(71, 183), (74, 177), (77, 183)], fill=C_ORG)
+            d.polygon([(73, 183), (74, 179), (75, 183)], fill=C_YEL)
+            d.point((75, 174), fill=C_WHT)
         else:
-            sub = int((kt - 3.8) * 4.5) % 2
-            fg_pose = "front_wave_a" if sub == 0 else "front_wave_b"
+            d.polygon([(70, 183), (71, 177), (74, 175), (77, 178), (78, 183)], fill=C_ORG)
+            d.polygon([(72, 183), (74, 177), (76, 183)], fill=C_YEL)
+            d.point((72, 175), fill=C_RED)
 
-        fg_spr = _SPRITES[(fg_pose, False, is_sick)]
-        fx = CX - fg_spr.width // 2
-        fy = 157  # Stands front-and-center at LCD glass (y=157..202), clear of Bottom HUD!
-        canvas.paste(fg_spr, (fx, fy), fg_spr)
+        if eff_sky != "day":
+            d.line([(109, 168), (115, 168)], fill=C_YEL)
+            d.point((110, 169), fill=C_YEL)
+            d.point((114, 169), fill=C_YEL)
 
-        # Concentric pixel glass-tap impact ripples at Jay's knuckles!
-        if fg_pose == "front_knock_hit":
-            kx, ky = fx + 28, fy + 10
-            for rr, rcol in ((4, C_WHT), (7, C_CYN), (10, C_YEL)):
-                d.arc([kx - rr, ky - rr, kx + rr, ky + rr], start=0, end=360, fill=rcol)
+        water_ratio = max(0.25, min(0.92, 1.0 - max(0.0, liquid_c - 26.0) / 30.0))
+        wt_h = max(3, int(round(13 * water_ratio)))
+        d.rectangle([142, 166 - wt_h, 147, 166], fill=C_CYN)
+        d.line([(142, 166 - wt_h), (147, 166 - wt_h)], fill=C_WHT)
 
-        # Crisp C64 Speech Bubble above Jay when knocking/waving
-        if kt >= 1.0:
-            msg = "TAP! TAP!" if kt < 3.8 else _SIM.knock_greeting
-            bw = max(58, len(msg) * 6 + 10)
-            bx0 = CX - bw // 2
-            bx1 = CX + bw // 2
-            by0, by1 = 138, 151
-            d.rectangle([bx0, by0, bx1, by1], fill=C_WHT, outline=C_BLK)
-            d.rectangle([bx0 + 1, by0 + 1, bx1 - 1, by1 - 1], outline=C_BLU)
-            # Speech bubble pointer tail to Jay
-            d.polygon([(CX - 3, by1), (CX + 3, by1), (CX, by1 + 4)], fill=C_WHT, outline=C_BLK)
-            d.line([(CX - 2, by1), (CX + 2, by1)], fill=C_WHT)
-            draw_pixel_text(canvas, CX, by0 + 3, msg, color=C_BLU, center_x=True)
+        if _SIM.activity == "RAIDING_FRIDGE" and _SIM.mode == "ACTING" and not _SIM.leaving_home_to_car:
+            d.rectangle([186, 167, 196, 184], fill=C_YEL)
+            d.line([(186, 173), (196, 173)], fill=C_LGY)
+            d.line([(186, 179), (196, 179)], fill=C_LGY)
+            d.rectangle([188, 170, 190, 172], fill=C_RED)
+            d.rectangle([192, 169, 194, 172], fill=C_GRN)
+            d.rectangle([189, 176, 193, 178], fill=C_CYN)
+            d.rectangle([197, 166, 200, 185], fill=C_WHT, outline=C_BLK)
+
+        # Open front entry door slightly when Jay is walking out to his EV car!
+        if _SIM.leaving_home_to_car and _SIM.floor == 0 and _SIM.x < 68:
+            d.rectangle([45, 157, 53, 185], fill=C_YEL if eff_sky != "day" else C_CYN, outline=C_BLK)
+
+        if is_party:
+            world.draw_house_party_overlay(
+                canvas, t, tick, settings, _PARTICLES["heart"], _PARTICLES["note_a"], _PARTICLES["note_b"]
+            )
+        elif settings.get("girlfriend_enabled", True) and _SIM.chloe_visiting_home:
+            gf_skin = world.SKIN_STYLES["caucasian"][1]
+            gf_spr = world.get_custom_char_sprite(
+                "gf_walk_1", gf_skin, world.HAIR_STYLES["blonde"][1], world.NEON_PINK, world.PASTEL_PINK, flip_x=True
+            )
+            canvas.paste(gf_spr, (116, 166), gf_spr)
+            if (tick % 8) < 4:
+                canvas.paste(_PARTICLES["heart"], (118, 155 - (tick % 3)), _PARTICLES["heart"])
+
+        # Pet Dog ("Buddy")
+        if _SIM.dog_mode == "MOVING":
+            dog_spr_name = f"dog_trot_{tick % 2}"
+        elif _SIM.activity == "PETTING_DOG" and _SIM.mode == "ACTING" and _SIM.dog_floor == _SIM.floor:
+            dog_spr_name = f"dog_sit_{tick % 2}"
+        elif _SIM.dog_goal == "NAP_FIRE" and not is_party:
+            dog_spr_name = f"dog_nap_{(tick // 4) % 2}"
+        elif _SIM.dog_goal == "EAT_BOWL":
+            dog_spr_name = f"dog_eat_{tick % 2}"
+        else:
+            dog_spr_name = f"dog_sit_{(tick // 2) % 2}"
+
+        dog_spr = _SPRITES[(dog_spr_name, _SIM.dog_face_left, False)]
+        dx_px = int(round(_SIM.dog_x)) - dog_spr.width // 2
+        dy_px = int(round(_SIM.dog_y)) - dog_spr.height + 1
+        canvas.paste(dog_spr, (dx_px, dy_px), dog_spr)
+
+        if _SIM.dog_mode == "ACTING" and _SIM.dog_goal == "NAP_FIRE" and not is_party:
+            zy = dy_px - 2 - (tick % 4)
+            draw_pixel_text(canvas, dx_px + 8, zy, "Z", color=C_WHT, shadow=C_BLK)
+
+        # Resident ("Jay")
+        is_foreground_knock = (
+            not _SIM.leaving_home_to_car and _SIM.activity == "GLASS_KNOCK_WAVE" and _SIM.mode == "ACTING"
+        )
+
+        if not is_foreground_knock:
+            if _SIM.leaving_home_to_car or _SIM.mode == "MOVING":
+                jay_name = f"climb_{tick % 2}" if _SIM.on_stairs else f"walk_{tick % 4}"
+                jay_spr = _get_jay_sprite(jay_name, _SIM.face_left, is_sick, settings)
+                jx = int(round(_SIM.x)) - jay_spr.width // 2
+                jy = int(round(_SIM.y)) - jay_spr.height + 1
+                canvas.paste(jay_spr, (jx, jy), jay_spr)
+                jay_head_xy = (int(round(_SIM.x)), jy + 2)
+
+            elif is_party and _SIM.activity not in ("PLAYING_PIANO", "RAIDING_FRIDGE"):
+                skin_c, hair_c, top_c, pants_c = world.resolve_appearance(settings)
+                jay_spr = world.get_custom_char_sprite(
+                    f"dance_{tick % 2}", skin_c, hair_c, top_c, pants_c, flip_x=_SIM.face_left
+                )
+                jx = int(round(_SIM.x)) - jay_spr.width // 2
+                jy = int(round(_SIM.y)) - jay_spr.height + 4
+                canvas.paste(jay_spr, (jx, jy), jay_spr)
+                jay_head_xy = (int(round(_SIM.x)), jy + 1)
+
+            elif _SIM.activity == "SLEEPING":
+                sl_spr = _get_jay_sprite(f"sleep_{(tick // 4) % 2}", False, is_sick, settings)
+                canvas.paste(sl_spr, (66, 83), sl_spr)
+                suppress_thought = True
+                for zi, zch in enumerate(("Z", "Z")):
+                    z_off = ((tick + zi * 4) % 8)
+                    zx = 74 + zi * 6 + (z_off // 3)
+                    zy = 76 - z_off
+                    if zy >= 62:
+                        draw_pixel_text(canvas, zx, zy, zch, color=C_WHT, shadow=C_BLK)
+
+            else:
+                if _SIM.activity in ("TYPING_C64", "PLAYING_PIANO"):
+                    jay_name = f"type_{tick % 2}"
+                elif _SIM.activity == "READING_BY_FIRE":
+                    jay_name = f"read_{(tick // 4) % 2}"
+                elif _SIM.activity == "RAIDING_FRIDGE":
+                    jay_name = f"snack_{(tick // 2) % 2}"
+                elif _SIM.activity == "PETTING_DOG":
+                    jay_name = f"pet_{(tick // 2) % 2}"
+                else:
+                    jay_name = "walk_1"
+
+                jay_spr = _get_jay_sprite(jay_name, _SIM.face_left, is_sick, settings)
+                jx = int(round(_SIM.x)) - jay_spr.width // 2
+                jy = int(round(_SIM.y)) - jay_spr.height + 1
+                canvas.paste(jay_spr, (jx, jy), jay_spr)
+                jay_head_xy = (int(round(_SIM.x)), jy + 3)
+
+                if _SIM.activity == "PLAYING_PIANO":
+                    for ni in range(2):
+                        n_prog = (tick + ni * 4) % 8
+                        nx = 192 + ni * 7 + (n_prog % 3) - 1
+                        ny = 116 - n_prog * 2
+                        if ny >= 102:
+                            n_ic = _PARTICLES["note_a" if ni == 0 else "note_b"]
+                            canvas.paste(n_ic, (nx, ny), n_ic)
+                elif _SIM.activity == "PETTING_DOG":
+                    hy = jy + 1 - (tick % 3)
+                    h_ic = _PARTICLES["heart"]
+                    canvas.paste(h_ic, (jx + 10, hy), h_ic)
+
+        if is_foreground_knock:
+            suppress_thought = True
+            kt = _SIM.act_timer
+            if kt < 0.8:
+                fg_pose = "front_idle"
+            elif kt < 3.8:
+                sub = int((kt - 0.8) * 4.5) % 2
+                fg_pose = "front_knock_hit" if sub == 1 else "front_knock_prep"
+            else:
+                sub = int((kt - 3.8) * 4.5) % 2
+                fg_pose = "front_wave_a" if sub == 0 else "front_wave_b"
+
+            fg_spr = _get_jay_sprite(fg_pose, False, is_sick, settings)
+            fx = CX - fg_spr.width // 2
+            fy = 157
+            canvas.paste(fg_spr, (fx, fy), fg_spr)
+
+            if fg_pose == "front_knock_hit":
+                kx, ky = fx + 28, fy + 10
+                for rr, rcol in ((4, C_WHT), (7, C_CYN), (10, C_YEL)):
+                    d.arc([kx - rr, ky - rr, kx + rr, ky + rr], start=0, end=360, fill=rcol)
+
+            if kt >= 1.0:
+                msg = "TAP! TAP!" if kt < 3.8 else _SIM.knock_greeting
+                bw = max(58, len(msg) * 6 + 10)
+                bx0 = CX - bw // 2
+                bx1 = CX + bw // 2
+                by0, by1 = 138, 151
+                d.rectangle([bx0, by0, bx1, by1], fill=C_WHT, outline=C_BLK)
+                d.rectangle([bx0 + 1, by0 + 1, bx1 - 1, by1 - 1], outline=C_BLU)
+                d.polygon([(CX - 3, by1), (CX + 3, by1), (CX, by1 + 4)], fill=C_WHT, outline=C_BLK)
+                d.line([(CX - 2, by1), (CX + 2, by1)], fill=C_WHT)
+                draw_pixel_text(canvas, CX, by0 + 3, msg, color=C_BLU, center_x=True)
+
+        if _SIM.leaving_home_to_car:
+            dest_s = world.VENUE_SHORT_NAMES.get(_SIM.transit_to, "CAR")
+            status_str = f"OFF TO {dest_s}!"[:17]
+            status_col = world.NEON_CYAN
+        elif is_party:
+            status_str = "HOUSE PARTY!" if (tick // 6) % 2 == 0 else "PARTY ON 3 FLOORS"
+            status_col = world.NEON_PINK if (tick // 6) % 2 == 0 else C_YEL
+        elif _SIM.mode == "MOVING":
+            if _SIM.activity == "GLASS_KNOCK_WAVE":
+                status_str = "COMING TO SAY HI"
+            elif _SIM.on_stairs:
+                status_str = "CLIMBING STAIRS"
+            elif _SIM.activity == "TYPING_C64" and ai_busy:
+                status_str = "TO C64 DESK"
+            else:
+                status_str = STATUS_LABELS.get(_SIM.activity, "WALKING HOME")
+            status_col = C_CYN
+        else:
+            if _SIM.activity == "TYPING_C64" and llm_loaded:
+                raw_model = str(llm.get("name") or "C64").upper()
+                short_m = raw_model[:13].rstrip("-")
+                status_str = f"AI:{short_m}" if (tick // 8) % 2 == 1 else "TYPING ON C64"
+                status_col = C_LGN
+            elif _SIM.activity == "GLASS_KNOCK_WAVE":
+                status_str = "KNOCK KNOCK!"
+                status_col = C_YEL
+            elif settings.get("girlfriend_enabled", True) and _SIM.chloe_visiting_home and (tick // 10) % 2 == 1:
+                gname = settings.get("girlfriend_name", "CHLOE")
+                status_str = f"{gname} VISITING"[:17]
+                status_col = world.PASTEL_PINK
+            else:
+                status_str = STATUS_LABELS.get(_SIM.activity, "AT HOME")
+                status_col = C_WHT
 
     # -----------------------------------------------------------------------
-    # 6. Top & Bottom C64 Status HUD Plaques (Strictly Inside Safe Chords)
+    # 2. Funny 2-Line Comic Thought Bubble Overlay!
     # -----------------------------------------------------------------------
-    # Top HUD (x = 73..167, y = 19..30 -> max radius = 110.2 < 114)
-    _draw_c64_plaque(d, 73, 19, 167, 30, bg=C_BLK, border=C_CYN)
-    clk_txt = now_dt.strftime("%H:%M")
+    if (
+        settings.get("thought_bubbles", True)
+        and not suppress_thought
+        and jay_head_xy is not None
+        and _SIM.thought_timer < _SIM.thought_show_secs
+    ):
+        world.draw_thought_bubble(
+            canvas, jay_head_xy[0], jay_head_xy[1], _SIM.current_thought, draw_pixel_text
+        )
+
+    # -----------------------------------------------------------------------
+    # 3. Top (Day + Time + Temps) & Bottom Status HUD Plaques
+    # -----------------------------------------------------------------------
+    d = ImageDraw.Draw(canvas)
+    _draw_c64_plaque(d, 67, 20, 173, 31, bg=C_BLK, border=C_CYN)
+    day_2 = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")[now_dt.weekday()]
+    clk_txt = f"{day_2} {now_dt.strftime('%H:%M')}"
     c_txt = f"C{cpu_temp}°"
     g_txt = f"G{gpu_temp}°"
-    draw_pixel_text(canvas, 77, 22, clk_txt, color=C_WHT)
-    draw_pixel_text(canvas, 111, 22, c_txt, color=_temp_color(cpu_temp))
-    draw_pixel_text(canvas, 139, 22, g_txt, color=_temp_color(gpu_temp))
+    draw_pixel_text(canvas, 71, 23, clk_txt, color=C_WHT)
+    draw_pixel_text(canvas, 123, 23, c_txt, color=_temp_color(cpu_temp))
+    draw_pixel_text(canvas, 148, 23, g_txt, color=_temp_color(gpu_temp))
 
-    # Bottom HUD (x = 64..176, y = 205..217 -> max radius = 111.0 < 114)
-    _draw_c64_plaque(d, 64, 205, 176, 217, bg=C_BLU, border=C_LBL)
-    if _SIM.mode == "MOVING":
-        if _SIM.activity == "GLASS_KNOCK_WAVE":
-            status_str = "COMING TO SAY HI"
-        elif _SIM.on_stairs:
-            status_str = "CLIMBING STAIRS"
-        elif _SIM.activity == "TYPING_C64" and ai_busy:
-            status_str = "TO C64 DESK"
-        else:
-            status_str = STATUS_LABELS.get(_SIM.activity, "WALKING HOME")
-        status_col = C_CYN
-    else:
-        if _SIM.activity == "TYPING_C64" and llm_loaded:
-            raw_model = str(llm.get("name") or "C64").upper()
-            # Keep strictly <= 16 chars to fit inside bottom chord
-            short_m = raw_model[:13].rstrip("-")
-            status_str = f"AI:{short_m}" if (tick // 8) % 2 == 1 else "TYPING ON C64"
-            status_col = C_LGN
-        elif _SIM.activity == "GLASS_KNOCK_WAVE":
-            status_str = "KNOCK KNOCK!"
-            status_col = C_YEL
-        else:
-            status_str = STATUS_LABELS.get(_SIM.activity, "AT HOME")
-            status_col = C_WHT
-
+    _draw_c64_plaque(d, 64, 205, 176, 217, bg=plaque_bg, border=plaque_bdr)
     draw_pixel_text(canvas, CX, 208, status_str[:17], color=status_col, shadow=C_BLK, center_x=True)
 
     # -----------------------------------------------------------------------
-    # 7. Circular C64 VIC-II Border Ring & 2x Nearest-Neighbor Upscale
+    # 4. Circular Bezel & 2x Nearest-Neighbor Upscale
     # -----------------------------------------------------------------------
     bezel = _get_bezel_overlay()
     canvas.paste(bezel, (0, 0), bezel)
