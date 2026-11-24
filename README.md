@@ -1,8 +1,9 @@
 # Corsair TITAN LCD for Linux + Little Computer Person 2026 (`corsair-titan-lcd-linux`)
 
 <p align="center">
-  <img src="assets/lcp_2026_showcase.gif" width="380" height="380" alt="Little Computer Person 2026 running on a circular 480x480 Corsair TITAN LCD" />
+  <img src="assets/titan_lcd_real_readme.gif" width="380" height="380" alt="Live footage on physical Corsair TITAN 360 RX LCD hardware" />&nbsp;&nbsp;<img src="assets/lcp_2026_showcase.gif" width="380" height="380" alt="6-scene pixel showcase of LCP 2026" />
 </p>
+<p align="center"><em>Left: Live on a physical Corsair TITAN 360 RX cooler on Ubuntu &nbsp;•&nbsp; Right: Direct 480×480 multi-venue feed</em></p>
 
 A fast, zero-bloat Linux display engine for **Corsair iCUE LINK TITAN RX LCD** (and compatible circular `480×480` Corsair AIO pump screens) powered by **[OpenLinkHub](https://github.com/jurkovic-nikola/OpenLinkHub)** — headlined by **LCP 2026 (Modern Edition)**, a full town-and-life evolution of Activision's 1985 Commodore 64 classic ***Little Computer People*** (*"House-on-a-Disk"*), plus **12 horological, avionics, retro-CRT, and workstation telemetry faces** AND a standalone **GTK4 Desktop Widget & Studio** that runs on *any* Linux PC even without a Corsair cooler!
 
