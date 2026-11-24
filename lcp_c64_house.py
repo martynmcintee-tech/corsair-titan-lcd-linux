@@ -2011,7 +2011,7 @@ def _temp_color(temp_c: int) -> tuple[int, int, int]:
 def render_theme_c64_lcp(gpu, llm, cpu, cooling, now_dt=None) -> Image.Image:
     """
     LCP 2026 — Modern Edition Circular 480x480 Renderer.
-    Realistic Mon-Fri 9-5 FCC work schedule, evenings at Home, weekends off-duty,
+    Realistic Mon-Fri 9-5 9-5 work schedule, evenings at Home, weekends off-duty,
     EV car commutes between places, 11 venues, and funny context-aware thought bubbles.
     """
     _init_sprites()

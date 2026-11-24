@@ -393,7 +393,7 @@ def draw_thought_bubble(
 
 
 # ===========================================================================
-# Realistic 2026 Life Schedule Resolver (Mon-Fri 9-5 FCC, Sat-Sun Never Work!)
+# Realistic 2026 Life Schedule Resolver (Mon-Fri 9-5 Work, Sat-Sun Never Work!)
 # ===========================================================================
 def compute_realistic_venue(
     now_dt: datetime.datetime,
@@ -402,7 +402,7 @@ def compute_realistic_venue(
 ) -> str:
     """
     Determines where Jay realistically is right now in 'auto' mode:
-      - Mon-Fri (weekday 0..4) 09:00..16:59 -> FCC Work (with optional quick 12:35-13:05 lunch nip to Greggs/Shops)
+      - Mon-Fri (weekday 0..4) 09:00..16:59 -> 9-5 Work (with optional quick 12:35-13:05 lunch nip to Greggs/Shops)
       - Mon-Thu & Sun Evenings (17:00..23:15) -> Primarily At Home (with occasional short evening gym/shop/pub/cinema trip)
       - Friday Night (18:30..00:59) -> Pub, Bistro Date, Cinema, Nightclub, or House Party
       - Sat & Sun (weekday 5..6) -> NEVER Work! Daytime adventures (Shops, Seaside, Gym, Pub Roast, Cinema, Hotel)
@@ -433,7 +433,7 @@ def compute_realistic_venue(
             if 12 * 60 + 35 <= mins < 13 * 60 + 5 and r.random() < 0.65:
                 return "shops"
             return "work_hub"
-        # If user toggled FCC shifts off, normal daytime errands/home
+        # If user toggled work shifts off, normal daytime errands/home
         return r.choice(["home", "shops", "gym", "park_beach"])
 
     # 3. WEEKDAY EVENINGS (Mon - Thu 17:00 - 23:15) -> Evenings at Home!
